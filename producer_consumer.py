@@ -1,113 +1,83 @@
-#!/usr/bin/env python3
-
-# producer consumer problem using threading
-import threading
 import cv2
-import os
-import time
+import threading
+import queue
 
-# globals
-OUTPUT_DIR    = 'frames'
-CLIP_FILE_NAME = 'clip.mp4'
-BUFFER_SIZE   = 10
-buffer = []
-bufferLock = threading.Lock()
-bufferFull = threading.Semaphore(0)
-bufferEmpty = threading.Semaphore(BUFFER_SIZE)
+# Create the queues
+queue1 = queue.Queue()
+queue2 = queue.Queue()
 
-# producer thread
-def extractFrames(clipFileName):
+def extractFrames(fileName):
     # initialize frame count
     count = 0
 
-    # open the video clip
-    vidcap = cv2.VideoCapture(clipFileName)
+    # open video file
+    vidcap = cv2.VideoCapture(fileName)
 
-    # create the output directory if it doesn't exist
-    if not os.path.exists(OUTPUT_DIR):
-        print(f"Output directory {OUTPUT_DIR} didn't exist, creating")
-        os.makedirs(OUTPUT_DIR)
+    # read first image
+    success,image = vidcap.read()
 
-    # read one frame
-    success, image = vidcap.read()
-
-    print(f'Reading frame {count} {success}')
     while success:
-        # add the frame to the buffer
-        bufferEmpty.acquire()
-        bufferLock.acquire()
-        buffer.append(image)
-        bufferLock.release()
-        bufferFull.release()
+        # add the frame to queue1
+        queue1.put(image)
 
-        success, image = vidcap.read()
-        print(f'Reading frame {count}')
+        success,image = vidcap.read()
+
+        print(f'Reading frame {count} {success}')
         count += 1
 
-    bufferEmpty.acquire()
-    bufferLock.acquire()
-    buffer.append(None)
-    bufferLock.release()
-    bufferFull.release()
+    # indicate that we're done adding frames to the queue
+    queue1.put(None)
 
-
-# consumer thread
 def convertToGrayscale():
     # initialize frame count
     count = 0
 
     while True:
-        bufferFull.acquire()
-        bufferLock.acquire()
-        if buffer[0] is None:
-            bufferLock.release()
+        # get the next frame from queue1
+        frame = queue1.get()
+
+        # if we got a None for a frame, then we're done
+        if frame is None:
             break
-        image = buffer.pop(0)
-        bufferLock.release()
-        bufferEmpty.release()
 
         print(f'Converting frame {count}')
 
         # convert the image to grayscale
-        grayscaleFrame = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        grayscaleFrame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-        # generate output file name
-        outFileName = f'{OUTPUT_DIR}/grayscale_{count:04d}.bmp'
-
-        # write output file
-        cv2.imwrite(outFileName, grayscaleFrame)
+        # add the grayscale frame to queue2
+        queue2.put(grayscaleFrame)
 
         count += 1
+
+    # indicate that we're done adding grayscale frames to the queue
+    queue2.put(None)
 
 def displayFrames():
     # initialize frame count
     count = 0
 
     while True:
-        bufferFull.acquire()
-        bufferLock.acquire()
-        if buffer[0] is None:
-            bufferLock.release()
+        # get the next grayscale frame from queue2
+        grayscaleFrame = queue2.get()
+
+        # if we got a None for a frame, then we're done
+        if grayscaleFrame is None:
             break
-        image = buffer.pop(0)
-        bufferLock.release()
-        bufferEmpty.release()
 
         print(f'Displaying frame {count}')
 
-        cv2.imshow('Video', image)
+        cv2.imshow('Video', grayscaleFrame)
 
         if cv2.waitKey(42) and 0xFF == ord('q'):
             break
 
         count += 1
 
-        time.sleep(1/24)
-
     cv2.destroyAllWindows()
 
 # start the producer and consumer threads
-extractFramesThread = threading.Thread(target=extractFrames, args=(CLIP_FILE_NAME,))
+extractFramesThread = threading.Thread(target=extractFrames, args=('clip.mp4',))
 convertToGrayscaleThread = threading.Thread(target=convertToGrayscale)
 displayFramesThread = threading.Thread(target=displayFrames)
 
@@ -118,6 +88,3 @@ displayFramesThread.start()
 extractFramesThread.join()
 convertToGrayscaleThread.join()
 displayFramesThread.join()
-
-
-print('Done.')
